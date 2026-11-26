@@ -415,6 +415,7 @@ export const MODELS = [
   "Nano Banana 2",
   "GPT Image 1.5",
   "GPT Image 2",
+  "GPT Image 2.5",
   "GPT Image 2.6",
   "Grok Imagine",
   "Seedream 4.5",
