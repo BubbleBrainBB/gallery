@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useAppStore } from "@/store";
-import { CATEGORIES } from "@/lib/constants";
+import { NAV_CATEGORIES } from "@/lib/constants";
 
 const GAP_PX = 28;
 
@@ -31,10 +31,10 @@ export default function CategoryTabs({
   const measureRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const [visibleCount, setVisibleCount] = useState<number>(CATEGORIES.length);
+  const [visibleCount, setVisibleCount] = useState<number>(NAV_CATEGORIES.length);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const labels = CATEGORIES.map((category) => tCommon(`categories.${category.slug}`));
+  const labels = NAV_CATEGORIES.map((category) => tCommon(`categories.${category.slug}`));
   const labelsKey = labels.join("|");
 
   // Fit as many tabs as the row allows; the rest go behind "More".
@@ -108,11 +108,11 @@ export default function CategoryTabs({
     setMenuOpen(false);
   };
 
-  const shown = CATEGORIES.slice(0, visibleCount);
-  const overflow = CATEGORIES.slice(visibleCount);
+  const shown = NAV_CATEGORIES.slice(0, visibleCount);
+  const overflow = NAV_CATEGORIES.slice(visibleCount);
   const activeOverflow = overflow.find((category) => category.slug === activeCategory);
   const moreLabel = activeOverflow
-    ? labels[CATEGORIES.indexOf(activeOverflow)]
+    ? labels[NAV_CATEGORIES.indexOf(activeOverflow)]
     : tHome("more");
 
   return (
@@ -187,7 +187,7 @@ export default function CategoryTabs({
                           : "text-[#5c564e] hover:bg-[#ebe7e0] hover:text-[#2a2520] dark:text-[#7a7269] dark:hover:bg-[#141210] dark:hover:text-[#c4bdb4]"
                       }`}
                     >
-                      {labels[CATEGORIES.indexOf(category)]}
+                      {labels[NAV_CATEGORIES.indexOf(category)]}
                     </button>
                   );
                 })}

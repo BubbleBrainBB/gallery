@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppStore } from "@/store";
-import { CATEGORIES, MODELS } from "@/lib/constants";
+import { NAV_CATEGORIES, MODELS } from "@/lib/constants";
 import { fetchCachedJson } from "@/lib/public-feed-cache";
 
 const TIME_FILTERS = [
@@ -157,7 +157,7 @@ export default function CategoryFilter({
   const availableCategorySlugs =
     showFavoritesOnly && !hasFavoriteSelection ? [] : fetchedCategorySlugs;
 
-  const visibleCategories = CATEGORIES.filter(
+  const visibleCategories = NAV_CATEGORIES.filter(
     (cat) => cat.slug !== "all" && availableCategorySlugs.includes(cat.slug)
   );
   const availableModels = [...MODELS];

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useAppStore } from "@/store";
-import { CATEGORIES } from "@/lib/constants";
+import { NAV_CATEGORIES } from "@/lib/constants";
 
 /**
  * Category switcher shown in the header once the gallery's own category row
@@ -67,7 +67,7 @@ export default function HeaderCategories({ visible }: { visible: boolean }) {
         ref={stripRef}
         className="scrollbar-hide hidden max-w-[720px] gap-6 overflow-x-auto md:flex"
       >
-        {CATEGORIES.map((category) => {
+        {NAV_CATEGORIES.map((category) => {
           const isActive = activeCategory === category.slug;
           return (
             <button
@@ -113,7 +113,7 @@ export default function HeaderCategories({ visible }: { visible: boolean }) {
             role="menu"
             className="absolute left-1/2 top-full z-50 mt-1 max-h-[60vh] min-w-44 -translate-x-1/2 overflow-y-auto rounded-[3px] border border-[#d5cfc4] bg-[#f5f2ed] py-2 dark:border-[#2a2520] dark:bg-[#0c0b09]"
           >
-            {CATEGORIES.map((category) => {
+            {NAV_CATEGORIES.map((category) => {
               const isActive = activeCategory === category.slug;
               return (
                 <button

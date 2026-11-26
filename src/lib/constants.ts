@@ -398,6 +398,13 @@ export const CATEGORIES = [
   { name: "Screenshot", slug: "screenshot" },
 ] satisfies Category[];
 
+// Categories shown in the gallery tab row, header strip and sidebar.
+// Images in other categories still appear under "All" and stay editable in admin.
+export const NAV_CATEGORY_SLUGS = ["all", "portrait"];
+export const NAV_CATEGORIES = CATEGORIES.filter((category) =>
+  NAV_CATEGORY_SLUGS.includes(category.slug)
+);
+
 export const MIDJOURNEY_MODEL = "Midjourney";
 
 export const MODELS = [
