@@ -410,6 +410,7 @@ export const MODELS = [
   "Seedream 4.5",
   "Seedream 5.0 Lite",
   "Seedream 5.0 Pro",
+  "Seedream 5.5",
   "Z Image",
   "Midjourney",
 ] as const;
