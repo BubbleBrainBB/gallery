@@ -10,6 +10,7 @@ import {
   ImageWriteValidationError,
   type ImageWriteBody,
 } from "@/lib/image-write-service";
+import { PUBLIC_IMAGE_CATEGORIES } from "@/lib/constants";
 import { supabase } from "@/lib/supabase";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { createClient as createServerClient } from "@/lib/supabase-server";
@@ -43,6 +44,12 @@ export async function GET(request: Request) {
   const mjProfile = searchParams.get("mj_profile");
   const mjSref = searchParams.get("mj_sref");
   const idsParam = searchParams.get("ids");
+  // Admin lists every category; the public gallery only sees PUBLIC_IMAGE_CATEGORIES.
+  const adminScope = searchParams.get("scope") === "admin";
+  if (adminScope) {
+    const authError = await ensureAdmin();
+    if (authError) return authError;
+  }
   const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "24"), 1), 100);
   const offset = Math.max(parseInt(searchParams.get("offset") || "0"), 0);
   const ids = idsParam
@@ -62,6 +69,10 @@ export async function GET(request: Request) {
 
   if (ids && ids.length > 0) {
     query = query.in("id", ids);
+  }
+
+  if (!adminScope) {
+    query = query.in("category", PUBLIC_IMAGE_CATEGORIES);
   }
 
   if (category && category !== "all") {

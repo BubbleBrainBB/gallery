@@ -398,9 +398,12 @@ export const CATEGORIES = [
   { name: "Screenshot", slug: "screenshot" },
 ] satisfies Category[];
 
+// Categories the public gallery shows. Images in other categories are hidden
+// from the gallery (including "All") but stay listed and editable in admin.
+export const PUBLIC_IMAGE_CATEGORIES: string[] = ["portrait"];
+
 // Categories shown in the gallery tab row, header strip and sidebar.
-// Images in other categories still appear under "All" and stay editable in admin.
-export const NAV_CATEGORY_SLUGS = ["all", "portrait"];
+export const NAV_CATEGORY_SLUGS = ["all", ...PUBLIC_IMAGE_CATEGORIES];
 export const NAV_CATEGORIES = CATEGORIES.filter((category) =>
   NAV_CATEGORY_SLUGS.includes(category.slug)
 );

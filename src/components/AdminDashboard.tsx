@@ -72,7 +72,7 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
     const accumulated: ImagePrompt[] = [];
 
     while (hasMore) {
-      const res = await fetch(`/api/images?limit=${pageSize}&offset=${offset}`, {
+      const res = await fetch(`/api/images?scope=admin&limit=${pageSize}&offset=${offset}`, {
         cache: "no-store",
       });
       const json = await res.json();

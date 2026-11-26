@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { CATEGORIES } from "@/lib/constants";
+import { PUBLIC_IMAGE_CATEGORIES } from "@/lib/constants";
 
 function buildCutoff(time: string | null) {
   if (!time || time === "all") {
@@ -29,9 +29,7 @@ export async function GET(request: Request) {
     .map((id) => id.trim())
     .filter(Boolean);
   const cutoff = buildCutoff(time);
-  const categorySlugs = CATEGORIES.filter((category) => category.slug !== "all").map(
-    (category) => category.slug
-  );
+  const categorySlugs = PUBLIC_IMAGE_CATEGORIES;
   const normalizedSearch = search?.replace(/[{},]/g, " ").trim() || null;
   const parsedAt = performance.now();
 
