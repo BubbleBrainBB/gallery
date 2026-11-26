@@ -19,8 +19,12 @@ export type CosImageMetadataErrorCode =
 export class CosImageMetadataError extends Error {
   readonly code: CosImageMetadataErrorCode;
 
-  constructor(code: CosImageMetadataErrorCode, message: string) {
-    super(message);
+  constructor(
+    code: CosImageMetadataErrorCode,
+    message: string,
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
     this.name = "CosImageMetadataError";
     this.code = code;
   }
@@ -39,7 +43,16 @@ interface ResolverOptions {
   maxResponseBytes?: number;
 }
 
+/** `message` describes the transient failure (status code or network error). */
 class RetryableMetadataError extends Error {}
+
+function describeFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  if (error.name === "AbortError") return "timeout";
+  const cause = (error as { cause?: { code?: unknown; message?: unknown } }).cause;
+  const detail = cause?.code ?? cause?.message;
+  return detail ? `${error.message} (${String(detail)})` : error.message;
+}
 
 function metadataUrlFor(imageUrl: string): URL {
   let parsed: URL;
@@ -171,13 +184,13 @@ async function fetchMetadataOnce(
         signal: controller.signal,
         headers: { Accept: "application/json" },
       });
-    } catch {
-      throw new RetryableMetadataError();
+    } catch (error) {
+      throw new RetryableMetadataError(describeFetchError(error));
     }
 
     if (response.status === 429 || response.status >= 500) {
       await response.body?.cancel().catch(() => undefined);
-      throw new RetryableMetadataError();
+      throw new RetryableMetadataError(`HTTP ${response.status}`);
     }
 
     if (response.status >= 300 && response.status < 400) {
@@ -247,6 +260,8 @@ export async function resolveCosImageDimensions(
   );
   const maximumRetries = boundedRetries(options.maxRetries);
 
+  const failures: string[] = [];
+
   for (let attempt = 0; attempt <= maximumRetries; attempt += 1) {
     try {
       return await fetchMetadataOnce(
@@ -259,10 +274,16 @@ export async function resolveCosImageDimensions(
       if (error instanceof CosImageMetadataError) throw error;
       // Fetch and response-stream failures are both network failures. This also
       // covers an abort firing after headers arrive but before the body ends.
+      failures.push(
+        error instanceof RetryableMetadataError
+          ? error.message
+          : describeFetchError(error)
+      );
       if (attempt === maximumRetries) {
         throw new CosImageMetadataError(
           "UNAVAILABLE",
-          "COS image metadata request was unavailable"
+          "COS image metadata request was unavailable",
+          { cause: failures.join("; ") }
         );
       }
       await sleep(100 * 2 ** attempt);

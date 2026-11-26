@@ -17,6 +17,32 @@ const normalizeImageUrlInput = (raw: string) => {
   return markdownMatch ? markdownMatch[1].trim() : trimmed;
 };
 
+const MEASURE_IMAGE_TIMEOUT_MS = 10_000;
+
+/**
+ * Loads the image in the browser to read its real pixel size. The server only
+ * uses this as a fallback when it cannot reach COS for the metadata itself.
+ */
+const measureImageInBrowser = (
+  url: string
+): Promise<{ width: number; height: number } | null> =>
+  new Promise((resolve) => {
+    const image = new window.Image();
+    const timer = window.setTimeout(() => resolve(null), MEASURE_IMAGE_TIMEOUT_MS);
+    const finish = (result: { width: number; height: number } | null) => {
+      window.clearTimeout(timer);
+      resolve(result);
+    };
+    image.onload = () =>
+      finish(
+        image.naturalWidth > 0 && image.naturalHeight > 0
+          ? { width: image.naturalWidth, height: image.naturalHeight }
+          : null
+      );
+    image.onerror = () => finish(null);
+    image.src = url;
+  });
+
 export default function AdminDashboard({ email }: AdminDashboardProps) {
   const router = useRouter();
   const [images, setImages] = useState<ImagePrompt[]>([]);
@@ -187,9 +213,11 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
     setSubmitting(true);
     setMessage("");
     const normalizedUrl = normalizeImageUrlInput(formUrl);
+    const browserDimensions = await measureImageInBrowser(normalizedUrl);
 
     const payload = {
       url: normalizedUrl,
+      ...(browserDimensions ?? {}),
       prompt: formPrompt,
       author: formAuthor,
       model: formModel,

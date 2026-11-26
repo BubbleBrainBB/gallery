@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { CosImageMetadataError } from "../src/lib/cos-image-metadata-core.ts";
 import {
   createImageRecord,
   ImageWriteConflictError,
@@ -225,5 +226,118 @@ describe("image write service midjourney columns", () => {
 
     assert.equal(updated?.mj_profiles, null);
     assert.equal(updated?.mj_version, null);
+  });
+});
+
+describe("image write service COS-unavailable fallback", () => {
+  const unavailable = () =>
+    new CosImageMetadataError(
+      "UNAVAILABLE",
+      "COS image metadata request was unavailable",
+      { cause: "timeout; timeout; timeout" }
+    );
+
+  const withDimensions = (width: unknown, height: unknown) => ({
+    ...body(),
+    width,
+    height,
+  });
+
+  it("POST uses browser-measured dimensions only when COS is unreachable", async () => {
+    let inserted: ImageMutation | null = null;
+    const fallbacks: unknown[] = [];
+
+    await createImageRecord(withDimensions(1440, 2560), {
+      resolveDimensions: async () => {
+        throw unavailable();
+      },
+      insert: async (mutation) => {
+        inserted = mutation;
+        return { id: "created" };
+      },
+      onDimensionFallback: (error, dimensions) => {
+        fallbacks.push([error.code, error.cause, dimensions]);
+      },
+    });
+
+    assert.equal(inserted?.width, 1440);
+    assert.equal(inserted?.height, 2560);
+    assert.deepEqual(fallbacks, [
+      ["UNAVAILABLE", "timeout; timeout; timeout", { width: 1440, height: 2560 }],
+    ]);
+  });
+
+  it("POST still fails when COS is unreachable and browser dimensions are missing or invalid", async () => {
+    for (const [width, height] of [
+      [undefined, undefined],
+      [0, 100],
+      [100, -1],
+      ["1440", "2560"],
+      [1.5, 100],
+      [20_001, 100],
+    ]) {
+      let insertCalls = 0;
+      await assert.rejects(
+        createImageRecord(withDimensions(width, height), {
+          resolveDimensions: async () => {
+            throw unavailable();
+          },
+          insert: async () => {
+            insertCalls += 1;
+            return { id: "created" };
+          },
+        }),
+        (error: unknown) =>
+          error instanceof CosImageMetadataError && error.code === "UNAVAILABLE"
+      );
+      assert.equal(insertCalls, 0, `inserted with ${width}x${height}`);
+    }
+  });
+
+  it("POST never falls back for invalid URLs or invalid COS metadata", async () => {
+    for (const code of ["INVALID_URL", "INVALID_METADATA"] as const) {
+      let insertCalls = 0;
+      await assert.rejects(
+        createImageRecord(withDimensions(1440, 2560), {
+          resolveDimensions: async () => {
+            throw new CosImageMetadataError(code, code);
+          },
+          insert: async () => {
+            insertCalls += 1;
+            return { id: "created" };
+          },
+        }),
+        (error: unknown) =>
+          error instanceof CosImageMetadataError && error.code === code
+      );
+      assert.equal(insertCalls, 0);
+    }
+  });
+
+  it("PUT uses browser-measured dimensions for a changed URL when COS is unreachable", async () => {
+    let updated: ImageMutation | null = null;
+
+    await updateImageRecord(
+      "image-1",
+      { ...withDimensions(800, 1200), url: CHANGED_URL },
+      {
+        findById: async () => ({
+          id: "image-1",
+          url: ORIGINAL_URL,
+          width: 1200,
+          height: 1800,
+        }),
+        resolveDimensions: async () => {
+          throw unavailable();
+        },
+        updateIfCurrentUrl: async (_id, _originalUrl, mutation) => {
+          updated = mutation;
+          return { id: "image-1" };
+        },
+      }
+    );
+
+    assert.equal(updated?.width, 800);
+    assert.equal(updated?.height, 1200);
   });
 });

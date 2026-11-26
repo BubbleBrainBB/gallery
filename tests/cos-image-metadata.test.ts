@@ -114,9 +114,36 @@ describe("resolveCosImageDimensions", () => {
         sleep: async () => undefined,
       }),
       (error: unknown) =>
-        error instanceof CosImageMetadataError && error.code === "UNAVAILABLE"
+        error instanceof CosImageMetadataError &&
+        error.code === "UNAVAILABLE" &&
+        error.cause === "HTTP 429; HTTP 429; HTTP 429"
     );
     assert.equal(requests, 3);
+  });
+
+  it("records why each attempt failed on the UNAVAILABLE error", async () => {
+    let requests = 0;
+
+    await assert.rejects(
+      resolveCosImageDimensions(VALID_IMAGE_URL, {
+        sleep: async () => undefined,
+        fetch: async () => {
+          requests += 1;
+          if (requests === 1) {
+            throw new TypeError("fetch failed", {
+              cause: Object.assign(new Error("connect"), { code: "ECONNRESET" }),
+            });
+          }
+          if (requests === 2) return new Response(null, { status: 503 });
+          throw new DOMException("Aborted", "AbortError");
+        },
+      }),
+      (error: unknown) =>
+        error instanceof CosImageMetadataError &&
+        error.code === "UNAVAILABLE" &&
+        error.message === "COS image metadata request was unavailable" &&
+        error.cause === "fetch failed (ECONNRESET); HTTP 503; timeout"
+    );
   });
 
   it("times out each attempt and keeps the retry bound", async () => {

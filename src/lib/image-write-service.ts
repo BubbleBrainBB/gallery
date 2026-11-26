@@ -1,4 +1,7 @@
-import type { ImageDimensions } from "./cos-image-metadata-core";
+import {
+  CosImageMetadataError,
+  type ImageDimensions,
+} from "./cos-image-metadata-core.ts";
 import {
   midjourneyColumnsFor,
   type MidjourneyColumns,
@@ -40,6 +43,47 @@ export interface ImageMutation extends MidjourneyColumns {
 }
 
 type ResolveDimensions = (url: string) => Promise<ImageDimensions>;
+type OnDimensionFallback = (
+  error: CosImageMetadataError,
+  dimensions: ImageDimensions
+) => void;
+
+const MAX_CLIENT_MEASURED_DIMENSION = 20_000;
+
+function clientMeasuredDimension(value: unknown): number | null {
+  return Number.isSafeInteger(value) &&
+    (value as number) > 0 &&
+    (value as number) <= MAX_CLIENT_MEASURED_DIMENSION
+    ? (value as number)
+    : null;
+}
+
+/**
+ * COS metadata stays the source of truth. Only when COS cannot be reached
+ * (not for invalid URLs or bad metadata) do we accept the width/height the
+ * admin's browser measured by actually loading the same image.
+ */
+async function resolveDimensionsFor(
+  body: ImageWriteBody,
+  url: string,
+  resolveDimensions: ResolveDimensions,
+  onFallback?: OnDimensionFallback
+): Promise<ImageDimensions> {
+  try {
+    return await resolveDimensions(url);
+  } catch (error) {
+    if (error instanceof CosImageMetadataError && error.code === "UNAVAILABLE") {
+      const width = clientMeasuredDimension(body.width);
+      const height = clientMeasuredDimension(body.height);
+      if (width && height) {
+        const dimensions = { width, height };
+        onFallback?.(error, dimensions);
+        return dimensions;
+      }
+    }
+    throw error;
+  }
+}
 
 export class ImageWriteValidationError extends Error {
   constructor(message: string) {
@@ -111,10 +155,16 @@ export async function createImageRecord<T>(
   dependencies: {
     resolveDimensions: ResolveDimensions;
     insert: (mutation: ImageMutation) => Promise<T>;
+    onDimensionFallback?: OnDimensionFallback;
   }
 ): Promise<T> {
   const url = imageUrlFrom(body.url);
-  const dimensions = await dependencies.resolveDimensions(url);
+  const dimensions = await resolveDimensionsFor(
+    body,
+    url,
+    dependencies.resolveDimensions,
+    dependencies.onDimensionFallback
+  );
   return dependencies.insert(mutationFrom(body, url, dimensions));
 }
 
@@ -129,6 +179,7 @@ export async function updateImageRecord<T>(
       originalUrl: string,
       mutation: ImageMutation
     ) => Promise<T | null>;
+    onDimensionFallback?: OnDimensionFallback;
   }
 ): Promise<T> {
   const existing = await dependencies.findById(id);
@@ -138,7 +189,12 @@ export async function updateImageRecord<T>(
   const dimensions =
     url === existing.url && hasValidStoredDimensions(existing)
       ? { width: existing.width, height: existing.height }
-      : await dependencies.resolveDimensions(url);
+      : await resolveDimensionsFor(
+          body,
+          url,
+          dependencies.resolveDimensions,
+          dependencies.onDimensionFallback
+        );
 
   const updated = await dependencies.updateIfCurrentUrl(
     id,

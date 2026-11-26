@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isAdminEmail } from "@/lib/admin";
 import {
   CosImageMetadataError,
+  logCosMetadataFailure,
   resolveCosImageDimensions,
 } from "@/lib/cos-image-metadata";
 import {
@@ -84,6 +85,8 @@ export async function PUT(
   try {
     const data = await updateImageRecord(id, body, {
       resolveDimensions: resolveCosImageDimensions,
+      onDimensionFallback: (error, dimensions) =>
+        logCosMetadataFailure("PUT /api/images/[id]", error, dimensions),
       findById: async (imageId) => {
         const { data, error } = await supabaseAdmin
           .from("images")
@@ -120,6 +123,7 @@ export async function PUT(
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof CosImageMetadataError) {
+      logCosMetadataFailure("PUT /api/images/[id]", error);
       const status = error.code === "INVALID_URL" ? 400 : 422;
       return NextResponse.json({ error: error.message }, { status });
     }
