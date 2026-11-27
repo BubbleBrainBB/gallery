@@ -341,3 +341,109 @@ describe("image write service COS-unavailable fallback", () => {
     assert.equal(updated?.height, 1200);
   });
 });
+
+describe("image write service extra_images", () => {
+  const EXTRA_A =
+    "https://image-1325800846.cos.ap-nanjing.myqcloud.com/extra-a.png";
+  const EXTRA_B =
+    "https://image-1325800846.cos.ap-nanjing.myqcloud.com/extra-b.png";
+
+  it("POST resolves dimensions for extra_images and deduplicates cover and duplicates", async () => {
+    let inserted: ImageMutation | null = null;
+    const resolved: string[] = [];
+
+    await createImageRecord(
+      {
+        ...body(),
+        extra_images: [
+          ORIGINAL_URL,
+          { url: EXTRA_A },
+          EXTRA_B,
+          { url: EXTRA_A },
+        ],
+      },
+      {
+        resolveDimensions: async (url) => {
+          resolved.push(url);
+          if (url === EXTRA_A) return { width: 1440, height: 2560 };
+          if (url === EXTRA_B) return { width: 941, height: 1672 };
+          return { width: 1000, height: 1500 };
+        },
+        insert: async (mutation) => {
+          inserted = mutation;
+          return { id: "created" };
+        },
+      }
+    );
+
+    assert.deepEqual(resolved.sort(), [EXTRA_A, EXTRA_B, ORIGINAL_URL].sort());
+    assert.deepEqual(inserted?.extra_images, [
+      { url: EXTRA_A, width: 1440, height: 2560 },
+      { url: EXTRA_B, width: 941, height: 1672 },
+    ]);
+  });
+
+  it("PUT preserves existing extra_images when extra_images is omitted", async () => {
+    let updated: ImageMutation | null = null;
+
+    await updateImageRecord("image-1", body(), {
+      findById: async () => ({
+        id: "image-1",
+        url: ORIGINAL_URL,
+        width: 941,
+        height: 1672,
+        extra_images: [{ url: EXTRA_A, width: 1440, height: 2560 }],
+      }),
+      resolveDimensions: async () => {
+        throw new Error("should not resolve unchanged urls");
+      },
+      updateIfCurrentUrl: async (_id, _url, mutation) => {
+        updated = mutation;
+        return { id: "image-1" };
+      },
+    });
+
+    assert.deepEqual(updated?.extra_images, [
+      { url: EXTRA_A, width: 1440, height: 2560 },
+    ]);
+  });
+
+  it("PUT reuses stored dimensions for unchanged extra images and falls back to browser dimensions for new ones", async () => {
+    let updated: ImageMutation | null = null;
+    const resolved: string[] = [];
+
+    await updateImageRecord(
+      "image-1",
+      {
+        ...body(),
+        extra_images: [
+          { url: EXTRA_A },
+          { url: EXTRA_B, width: 941, height: 1672 },
+        ],
+      },
+      {
+        findById: async () => ({
+          id: "image-1",
+          url: ORIGINAL_URL,
+          width: 941,
+          height: 1672,
+          extra_images: [{ url: EXTRA_A, width: 1440, height: 2560 }],
+        }),
+        resolveDimensions: async (url) => {
+          resolved.push(url);
+          throw new CosImageMetadataError("UNAVAILABLE", "unavailable");
+        },
+        updateIfCurrentUrl: async (_id, _url, mutation) => {
+          updated = mutation;
+          return { id: "image-1" };
+        },
+      }
+    );
+
+    assert.deepEqual(resolved, [EXTRA_B]);
+    assert.deepEqual(updated?.extra_images, [
+      { url: EXTRA_A, width: 1440, height: 2560 },
+      { url: EXTRA_B, width: 941, height: 1672 },
+    ]);
+  });
+});

@@ -1,3 +1,10 @@
+/** An additional image in a gallery set; the entry's own url is the cover. */
+export interface GalleryExtraImage {
+  url: string;
+  width: number;
+  height: number;
+}
+
 export interface ImagePrompt {
   id: string;
   url: string;
@@ -18,6 +25,7 @@ export interface ImagePrompt {
   mj_profiles?: string[] | null;
   mj_srefs?: string[] | null;
   mj_params?: Record<string, string> | null;
+  extra_images?: GalleryExtraImage[] | null;
 }
 
 export interface Favorite {

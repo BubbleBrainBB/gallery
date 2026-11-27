@@ -467,7 +467,12 @@
     "srefLabel": "Style reference",
     "defaultProfile": "Author's default profile",
     "viewStyle": "View style",
-    "copyCommand": "Copy Full Command"
+    "copyCommand": "Copy Full Command",
+    "series": "Series",
+    "seriesCount": "{count} frames",
+    "viewSingle": "Single",
+    "viewAll": "All frames",
+    "frameLabel": "Frame {index} of {total}"
   },
   "search": {
     "placeholder": "Search prompts, tags, authors...",

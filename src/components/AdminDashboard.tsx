@@ -4,6 +4,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { CATEGORIES, MODELS } from "@/lib/constants";
+import {
+  getImageSetCount,
+  MAX_EXTRA_IMAGES,
+  parseImageUrlInputs,
+} from "@/lib/image-sets";
 import { createClient as createBrowserClient } from "@/lib/supabase-browser";
 import type { ImagePrompt } from "@/lib/types";
 
@@ -64,6 +69,8 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
   const [formTweetUrl, setFormTweetUrl] = useState("");
   const [formPromptZh, setFormPromptZh] = useState("");
   const [formPromptJa, setFormPromptJa] = useState("");
+  const [formExtraUrls, setFormExtraUrls] = useState<string[]>([]);
+  const [extraUrlInput, setExtraUrlInput] = useState("");
 
   const fetchImagesFromApi = useCallback(async () => {
     const pageSize = 50;
@@ -162,6 +169,8 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
     setFormTweetUrl("");
     setFormPromptZh("");
     setFormPromptJa("");
+    setFormExtraUrls([]);
+    setExtraUrlInput("");
     setEditingImage(null);
     setShowForm(false);
     setMessage("");
@@ -204,8 +213,43 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
     setFormTweetUrl(detail.tweet_url || "");
     setFormPromptZh(detail.prompt_zh || "");
     setFormPromptJa(detail.prompt_ja || "");
+    setFormExtraUrls((detail.extra_images ?? []).map((item) => item.url));
+    setExtraUrlInput("");
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const mergeExtraUrls = (current: string[], rawInput: string, coverUrl: string) => {
+    const seen = new Set<string>([coverUrl, ...current].filter(Boolean));
+    const next = [...current];
+    for (const url of parseImageUrlInputs(rawInput)) {
+      if (!seen.has(url) && next.length < MAX_EXTRA_IMAGES) {
+        seen.add(url);
+        next.push(url);
+      }
+    }
+    return next;
+  };
+
+  const handleAddExtraUrls = () => {
+    const coverUrl = normalizeImageUrlInput(formUrl);
+    const next = mergeExtraUrls(formExtraUrls, extraUrlInput, coverUrl);
+    setFormExtraUrls(next);
+    setExtraUrlInput("");
+  };
+
+  const handleMoveExtraUrl = (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= formExtraUrls.length) return;
+    setFormExtraUrls((prev) => {
+      const copy = [...prev];
+      [copy[index], copy[target]] = [copy[target], copy[index]];
+      return copy;
+    });
+  };
+
+  const handleRemoveExtraUrl = (index: number) => {
+    setFormExtraUrls((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -213,11 +257,29 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
     setSubmitting(true);
     setMessage("");
     const normalizedUrl = normalizeImageUrlInput(formUrl);
-    const browserDimensions = await measureImageInBrowser(normalizedUrl);
+    const mergedExtraUrls = mergeExtraUrls(
+      formExtraUrls,
+      extraUrlInput,
+      normalizedUrl
+    );
+    if (extraUrlInput.trim()) {
+      setFormExtraUrls(mergedExtraUrls);
+      setExtraUrlInput("");
+    }
+    const [browserDimensions, extraImages] = await Promise.all([
+      measureImageInBrowser(normalizedUrl),
+      Promise.all(
+        mergedExtraUrls.map(async (url) => {
+          const dims = await measureImageInBrowser(url);
+          return dims ? { url, ...dims } : { url };
+        })
+      ),
+    ]);
 
     const payload = {
       url: normalizedUrl,
       ...(browserDimensions ?? {}),
+      extra_images: extraImages,
       prompt: formPrompt,
       author: formAuthor,
       model: formModel,
@@ -495,6 +557,91 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
                 )}
               </div>
 
+              <div className="rounded-xl border border-[#d5cfc4] dark:border-[#2a2520] bg-[#ebe7e0]/60 dark:bg-[#1a1814]/60 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-[#8a837a] dark:text-[#5c564e]">
+                    Series / Extra Images ({formExtraUrls.length}/{MAX_EXTRA_IMAGES})
+                  </label>
+                  <span className="text-[10px] text-[#8a837a] dark:text-[#4a443c]">
+                    Cover stays #1; extras follow in order
+                  </span>
+                </div>
+
+                <div className="flex gap-2">
+                  <textarea
+                    value={extraUrlInput}
+                    onChange={(e) => setExtraUrlInput(e.target.value)}
+                    placeholder="Paste one or more COS URLs or markdown ![](url) separated by newlines or commas"
+                    rows={2}
+                    className="flex-1 rounded-lg border border-[#d5cfc4] dark:border-[#2a2520] bg-[#f5f2ed] dark:bg-[#141210] px-3 py-2 text-xs text-[#141210] dark:text-[#e0d9ce] placeholder-[#8a837a] dark:placeholder-[#4a443c] outline-none focus:border-[#8a837a] dark:focus:border-[#5c564e]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddExtraUrls}
+                    disabled={!extraUrlInput.trim() || formExtraUrls.length >= MAX_EXTRA_IMAGES}
+                    className="self-start rounded-lg bg-[#141210] dark:bg-[#f5f2ed] px-3.5 py-2 text-xs font-medium text-[#f5f2ed] dark:text-[#141210] transition-colors hover:bg-[#2a2520] dark:hover:bg-[#d5cfc4] disabled:opacity-40"
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {formExtraUrls.length > 0 && (
+                  <div className="space-y-2 pt-1">
+                    {formExtraUrls.map((extraUrl, index) => (
+                      <div
+                        key={extraUrl}
+                        className="flex items-center gap-3 rounded-lg bg-[#f5f2ed] dark:bg-[#141210] p-2 ring-1 ring-[#d5cfc4] dark:ring-[#2a2520]"
+                      >
+                        <span className="w-5 text-center font-mono text-[10px] text-[#8a837a]">
+                          {String(index + 2).padStart(2, "0")}
+                        </span>
+                        <div className="h-12 w-9 flex-shrink-0 overflow-hidden rounded bg-[#e0d9ce] dark:bg-[#1a1814]">
+                          <Image
+                            src={extraUrl}
+                            alt=""
+                            width={36}
+                            height={48}
+                            unoptimized
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#5c564e] dark:text-[#a39b90]">
+                          {extraUrl}
+                        </p>
+                        <div className="flex flex-shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveExtraUrl(index, -1)}
+                            disabled={index === 0}
+                            title="Move up"
+                            className="rounded px-1.5 py-1 text-xs text-[#8a837a] hover:bg-[#e0d9ce] dark:hover:bg-[#2a2520] disabled:opacity-30"
+                          >
+                            &uarr;
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveExtraUrl(index, 1)}
+                            disabled={index === formExtraUrls.length - 1}
+                            title="Move down"
+                            className="rounded px-1.5 py-1 text-xs text-[#8a837a] hover:bg-[#e0d9ce] dark:hover:bg-[#2a2520] disabled:opacity-30"
+                          >
+                            &darr;
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveExtraUrl(index)}
+                            title="Remove"
+                            className="rounded px-1.5 py-1 text-xs text-[#8a837a] hover:bg-red-500/10 hover:text-red-500"
+                          >
+                            &times;
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-[#8a837a] dark:text-[#5c564e]">
                   Tweet URL (optional)
@@ -612,6 +759,11 @@ export default function AdminDashboard({ email }: AdminDashboardProps) {
                       <span className="rounded bg-[#e0d9ce] dark:bg-[#1a1814] px-1.5 py-0.5 text-[10px]">
                         {image.category}
                       </span>
+                      {getImageSetCount(image) > 1 && (
+                        <span className="rounded bg-[#2a2520]/10 dark:bg-[#f5f2ed]/10 px-1.5 py-0.5 font-mono text-[10px] text-[#2a2520] dark:text-[#d5cfc4]">
+                          {getImageSetCount(image)} frames
+                        </span>
+                      )}
                     </div>
                   </div>
 

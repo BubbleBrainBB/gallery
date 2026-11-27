@@ -3,9 +3,14 @@ import {
   type ImageDimensions,
 } from "./cos-image-metadata-core.ts";
 import {
+  MAX_EXTRA_IMAGES,
+  normalizeStoredExtraImages,
+} from "./image-sets.ts";
+import {
   midjourneyColumnsFor,
   type MidjourneyColumns,
 } from "./midjourney-params.ts";
+import type { GalleryExtraImage } from "./types.ts";
 
 export interface ImageWriteBody {
   url?: unknown;
@@ -19,6 +24,7 @@ export interface ImageWriteBody {
   tweet_url?: unknown;
   prompt_zh?: unknown;
   prompt_ja?: unknown;
+  extra_images?: unknown;
 }
 
 export interface ExistingImageDimensions {
@@ -26,6 +32,7 @@ export interface ExistingImageDimensions {
   url: string;
   width: number | null;
   height: number | null;
+  extra_images?: GalleryExtraImage[] | null;
 }
 
 export interface ImageMutation extends MidjourneyColumns {
@@ -40,6 +47,7 @@ export interface ImageMutation extends MidjourneyColumns {
   tweet_url: unknown;
   prompt_zh: unknown;
   prompt_ja: unknown;
+  extra_images: GalleryExtraImage[];
 }
 
 type ResolveDimensions = (url: string) => Promise<ImageDimensions>;
@@ -118,10 +126,107 @@ function nullableValue(value: unknown): unknown {
   return value || null;
 }
 
+interface ExtraImageInput {
+  url: string;
+  width?: unknown;
+  height?: unknown;
+}
+
+function parseExtraImageInputs(
+  raw: unknown,
+  coverUrl: string
+): ExtraImageInput[] {
+  if (raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ImageWriteValidationError("Extra images must be an array");
+  }
+
+  const seen = new Set<string>([coverUrl]);
+  const parsed: ExtraImageInput[] = [];
+
+  for (const item of raw) {
+    let urlRaw: unknown;
+    let width: unknown;
+    let height: unknown;
+
+    if (typeof item === "string") {
+      urlRaw = item;
+    } else if (item && typeof item === "object" && !Array.isArray(item)) {
+      const record = item as Record<string, unknown>;
+      urlRaw = record.url;
+      width = record.width;
+      height = record.height;
+    } else {
+      throw new ImageWriteValidationError(
+        "Each extra image must be a URL or an object with a url"
+      );
+    }
+
+    if (typeof urlRaw !== "string" || urlRaw.trim() === "") {
+      throw new ImageWriteValidationError("Extra image URL is required");
+    }
+
+    const url = urlRaw.trim();
+    if (seen.has(url)) continue;
+    seen.add(url);
+
+    if (parsed.length >= MAX_EXTRA_IMAGES) {
+      throw new ImageWriteValidationError(
+        `At most ${MAX_EXTRA_IMAGES} extra images are allowed`
+      );
+    }
+
+    parsed.push({ url, width, height });
+  }
+
+  return parsed;
+}
+
+async function resolveExtraImagesFor(
+  raw: unknown,
+  coverUrl: string,
+  existingExtras: GalleryExtraImage[] | null | undefined,
+  resolveDimensions: ResolveDimensions,
+  onFallback?: OnDimensionFallback
+): Promise<GalleryExtraImage[]> {
+  const stored = normalizeStoredExtraImages(existingExtras, coverUrl);
+  if (raw === undefined) {
+    return stored;
+  }
+
+  const inputs = parseExtraImageInputs(raw, coverUrl);
+  if (inputs.length === 0) return [];
+
+  const storedByUrl = new Map(stored.map((item) => [item.url, item]));
+
+  return Promise.all(
+    inputs.map(async (input) => {
+      const preserved = storedByUrl.get(input.url);
+      if (preserved && hasValidStoredDimensions(preserved)) {
+        return preserved;
+      }
+
+      const dimensions = await resolveDimensionsFor(
+        { width: input.width, height: input.height },
+        input.url,
+        resolveDimensions,
+        onFallback
+      );
+
+      return {
+        url: input.url,
+        width: dimensions.width,
+        height: dimensions.height,
+      };
+    })
+  );
+}
+
 function mutationFrom(
   body: ImageWriteBody,
   url: string,
-  dimensions: ImageDimensions
+  dimensions: ImageDimensions,
+  extraImages: GalleryExtraImage[]
 ): ImageMutation {
   return {
     url,
@@ -135,6 +240,7 @@ function mutationFrom(
     tweet_url: nullableValue(body.tweet_url),
     prompt_zh: nullableValue(body.prompt_zh),
     prompt_ja: nullableValue(body.prompt_ja),
+    extra_images: extraImages,
     ...midjourneyColumnsFor(body.model, body.prompt),
   };
 }
@@ -159,13 +265,22 @@ export async function createImageRecord<T>(
   }
 ): Promise<T> {
   const url = imageUrlFrom(body.url);
-  const dimensions = await resolveDimensionsFor(
-    body,
-    url,
-    dependencies.resolveDimensions,
-    dependencies.onDimensionFallback
-  );
-  return dependencies.insert(mutationFrom(body, url, dimensions));
+  const [dimensions, extraImages] = await Promise.all([
+    resolveDimensionsFor(
+      body,
+      url,
+      dependencies.resolveDimensions,
+      dependencies.onDimensionFallback
+    ),
+    resolveExtraImagesFor(
+      body.extra_images,
+      url,
+      [],
+      dependencies.resolveDimensions,
+      dependencies.onDimensionFallback
+    ),
+  ]);
+  return dependencies.insert(mutationFrom(body, url, dimensions, extraImages));
 }
 
 export async function updateImageRecord<T>(
@@ -186,20 +301,28 @@ export async function updateImageRecord<T>(
   if (!existing) throw new ImageWriteNotFoundError();
 
   const url = imageUrlFrom(body.url, existing.url);
-  const dimensions =
+  const [dimensions, extraImages] = await Promise.all([
     url === existing.url && hasValidStoredDimensions(existing)
-      ? { width: existing.width, height: existing.height }
-      : await resolveDimensionsFor(
+      ? Promise.resolve({ width: existing.width, height: existing.height })
+      : resolveDimensionsFor(
           body,
           url,
           dependencies.resolveDimensions,
           dependencies.onDimensionFallback
-        );
+        ),
+    resolveExtraImagesFor(
+      body.extra_images,
+      url,
+      existing.extra_images,
+      dependencies.resolveDimensions,
+      dependencies.onDimensionFallback
+    ),
+  ]);
 
   const updated = await dependencies.updateIfCurrentUrl(
     id,
     existing.url,
-    mutationFrom(body, url, dimensions)
+    mutationFrom(body, url, dimensions, extraImages)
   );
   if (!updated) throw new ImageWriteConflictError();
 

@@ -4,6 +4,7 @@ import { useEffect, useRef, useMemo } from "react";
 import GalleryImage from "./GalleryImage";
 import { useTranslations } from "next-intl";
 import { useAppStore } from "@/store";
+import { getImageSetCount } from "@/lib/image-sets";
 import type { ImagePrompt } from "@/lib/types";
 
 interface SearchModalProps {
@@ -106,7 +107,9 @@ export default function SearchModal({ open, onClose, isLoadingResults }: SearchM
 
           {searchInput && !isLoadingResults && results.length > 0 && (
             <div className="grid grid-cols-3 gap-2 p-4">
-              {results.map((image) => (
+              {results.map((image) => {
+                const setCount = getImageSetCount(image);
+                return (
                 <div
                   key={image.id}
                   onClick={() => handleSelectImage(image)}
@@ -125,9 +128,15 @@ export default function SearchModal({ open, onClose, isLoadingResults }: SearchM
                     className="h-full w-full object-cover transition-all duration-300 group-hover:scale-105 group-hover:brightness-110"
                     sizes="200px"
                   />
+                  {setCount > 1 && (
+                    <span className="pointer-events-none absolute top-2 left-2 rounded-[4px] bg-[#141210]/60 px-1.5 py-0.5 font-mono text-[10px] leading-none text-[#f5f2ed]/90 backdrop-blur-sm">
+                      {setCount}
+                    </span>
+                  )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

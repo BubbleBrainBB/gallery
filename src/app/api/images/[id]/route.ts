@@ -90,11 +90,22 @@ export async function PUT(
       findById: async (imageId) => {
         const { data, error } = await supabaseAdmin
           .from("images")
-          .select("id,url,width,height")
+          .select("id,url,width,height,extra_images")
           .eq("id", imageId)
           .maybeSingle();
 
-        if (error) throw new Error("Image lookup failed");
+        if (error) {
+          if (error.message?.includes("extra_images")) {
+            const fallback = await supabaseAdmin
+              .from("images")
+              .select("id,url,width,height")
+              .eq("id", imageId)
+              .maybeSingle();
+            if (fallback.error) throw new Error("Image lookup failed");
+            return fallback.data;
+          }
+          throw new Error("Image lookup failed");
+        }
         return data;
       },
       updateIfCurrentUrl: async (imageId, originalUrl, mutation) => {

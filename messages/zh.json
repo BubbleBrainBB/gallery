@@ -467,7 +467,12 @@
     "srefLabel": "风格参考",
     "defaultProfile": "作者默认风格",
     "viewStyle": "查看同风格",
-    "copyCommand": "复制完整命令"
+    "copyCommand": "复制完整命令",
+    "series": "系列",
+    "seriesCount": "共 {count} 张",
+    "viewSingle": "单张",
+    "viewAll": "全部同屏",
+    "frameLabel": "第 {index} / {total} 张"
   },
   "search": {
     "placeholder": "搜索提示词、标签、作者...",

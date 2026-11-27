@@ -47,4 +47,15 @@ describe("reference-image-url", () => {
     assert.equal(result.url, null);
     assert.match(result.error ?? "", /uploaded or generated/i);
   });
+
+  it("accepts an extra image belonging to the same catalog set", () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+    const extraUrl = "https://cdn.example.com/gallery/photo-2.jpg";
+    const result = pickTrustedReferenceUrl(userId, extraUrl, [
+      catalogUrl,
+      extraUrl,
+    ]);
+    assert.equal(result.url, extraUrl);
+    assert.equal(result.error, null);
+  });
 });

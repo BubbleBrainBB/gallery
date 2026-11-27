@@ -4,6 +4,7 @@ import { memo, useState } from "react";
 import GalleryImage from "./GalleryImage";
 import { useAppStore } from "@/store";
 import type { ImagePrompt } from "@/lib/types";
+import { getImageSetCount } from "@/lib/image-sets";
 import {
   isMidjourneyModel,
   type StyleCodeKind,
@@ -24,6 +25,7 @@ function ImageCard({ image }: ImageCardProps) {
   const [isDecoded, setIsDecoded] = useState(false);
 
   const summary = image.model || "AI Generated Image";
+  const setCount = getImageSetCount(image);
   const isMidjourney = isMidjourneyModel(image.model);
   // One chip per kind: the first code, plus a count of any others it was mixed with.
   const styleChips: Array<{ kind: StyleCodeKind; code: string; all: string[] }> = isMidjourney
@@ -79,6 +81,37 @@ function ImageCard({ image }: ImageCardProps) {
             isDecoded ? "opacity-0" : "opacity-100"
           }`}
         />
+
+        {/* Multi-image series indicator — subtle, always legible */}
+        {setCount > 1 && (
+          <div
+            aria-label={`${setCount} images`}
+            className="pointer-events-none absolute top-3.5 left-3.5 flex items-center gap-1.5 rounded-[4px] bg-[#141210]/55 px-2 py-1 font-mono text-[10px] leading-none tracking-wider text-[#f5f2ed]/90 backdrop-blur-sm transition-colors duration-300 group-hover:bg-[#141210]/75"
+          >
+            <svg
+              className="h-3 w-3 opacity-85"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <rect
+                x="4"
+                y="7"
+                width="12"
+                height="13"
+                rx="1.5"
+                strokeWidth={1.6}
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.6}
+                d="M8 4h10.5A1.5 1.5 0 0120 5.5V16"
+              />
+            </svg>
+            <span>{setCount}</span>
+          </div>
+        )}
 
         {/* Favorite — minimal, only on hover */}
         <button

@@ -30,15 +30,24 @@ export function isUserOwnedStorageUrl(url: string, userId: string) {
 export function pickTrustedReferenceUrl(
   userId: string,
   sourceImageUrl: string | null,
-  catalogUrl: string | null
+  catalogUrl: string | string[] | null
 ) {
   if (sourceImageUrl && isUserOwnedStorageUrl(sourceImageUrl, userId)) {
     return { url: sourceImageUrl, error: null as string | null };
   }
 
-  if (catalogUrl) {
-    if (!sourceImageUrl || sourceImageUrl === catalogUrl) {
-      return { url: catalogUrl, error: null };
+  const allowedCatalogUrls = Array.isArray(catalogUrl)
+    ? catalogUrl.map((u) => u.trim()).filter(Boolean)
+    : catalogUrl
+      ? [catalogUrl.trim()].filter(Boolean)
+      : [];
+
+  if (allowedCatalogUrls.length > 0) {
+    if (!sourceImageUrl) {
+      return { url: allowedCatalogUrls[0], error: null };
+    }
+    if (allowedCatalogUrls.includes(sourceImageUrl)) {
+      return { url: sourceImageUrl, error: null };
     }
 
     return {

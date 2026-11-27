@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import EditorialModalCloseButton from "./EditorialModalCloseButton";
 import MidjourneyLogo from "./MidjourneyLogo";
 import GalleryImage from "./GalleryImage";
@@ -12,6 +12,7 @@ import {
   saveRemixGenerationDraft,
 } from "@/lib/generation-draft";
 import { formatDate } from "@/lib/format";
+import { getImageSetFrames } from "@/lib/image-sets";
 import type { Locale } from "@/i18n/routing";
 import { useAppStore } from "@/store";
 import type { ImagePrompt } from "@/lib/types";
@@ -50,6 +51,11 @@ export default function ImageModal() {
 
   const [promptLang, setPromptLang] = useState<"en" | "zh" | "ja">("en");
   const [copied, setCopied] = useState<"text" | "command" | null>(null);
+  const [frameState, setFrameState] = useState<{
+    imageId: string;
+    index: number;
+    viewMode: "single" | "grid";
+  }>({ imageId: "", index: 0, viewMode: "single" });
   const [imageDetailsById, setImageDetailsById] = useState<
     Record<string, ImagePrompt>
   >({});
@@ -66,24 +72,94 @@ export default function ImageModal() {
     ? (imageDetailsById[selectedImage.id] ?? selectedImage)
     : null;
 
+  const frames = useMemo(
+    () => (activeImage ? getImageSetFrames(activeImage) : []),
+    [activeImage]
+  );
+  const isSeries = frames.length > 1;
+  const activeFrameIndex =
+    selectedImage &&
+    frameState.imageId === selectedImage.id &&
+    frameState.index >= 0 &&
+    frameState.index < frames.length
+      ? frameState.index
+      : 0;
+  const seriesViewMode =
+    isSeries && selectedImage && frameState.imageId === selectedImage.id
+      ? frameState.viewMode
+      : "single";
+
+  const setActiveFrame = useCallback(
+    (index: number, viewMode: "single" | "grid" = "single") => {
+      if (!selectedImage) return;
+      setFrameState({ imageId: selectedImage.id, index, viewMode });
+    },
+    [selectedImage]
+  );
+
+  const setViewMode = useCallback(
+    (viewMode: "single" | "grid") => {
+      if (!selectedImage) return;
+      setFrameState((prev) => ({
+        imageId: selectedImage.id,
+        index: prev.imageId === selectedImage.id ? prev.index : 0,
+        viewMode,
+      }));
+    },
+    [selectedImage]
+  );
+
+  const selectEntry = useCallback(
+    (nextImage: ImagePrompt) => {
+      setSelectedImage(nextImage);
+      setPromptLang("en");
+      setFrameState({ imageId: nextImage.id, index: 0, viewMode: "single" });
+    },
+    [setSelectedImage]
+  );
+
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!selectedImage) return;
       const idx = allImages.findIndex((img) => img.id === selectedImage.id);
-      if (e.key === "Escape") setSelectedImage(null);
-      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
-        e.preventDefault();
-        const next = allImages[(idx + 1) % allImages.length];
-        setSelectedImage(next);
-        setPromptLang("en");
+      if (e.key === "Escape") {
+        setSelectedImage(null);
+        return;
       }
-      if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      if (e.key === "ArrowRight") {
         e.preventDefault();
-        const prev =
-          allImages[(idx - 1 + allImages.length) % allImages.length];
-        setSelectedImage(prev);
-        setPromptLang("en");
+        if (
+          isSeries &&
+          seriesViewMode === "single" &&
+          activeFrameIndex < frames.length - 1
+        ) {
+          setActiveFrame(activeFrameIndex + 1, "single");
+        } else if (allImages.length > 0) {
+          selectEntry(allImages[(idx + 1) % allImages.length]);
+        }
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (isSeries && seriesViewMode === "single" && activeFrameIndex > 0) {
+          setActiveFrame(activeFrameIndex - 1, "single");
+        } else if (allImages.length > 0) {
+          selectEntry(
+            allImages[(idx - 1 + allImages.length) % allImages.length]
+          );
+        }
+        return;
+      }
+      if (e.key === "ArrowDown" && allImages.length > 0) {
+        e.preventDefault();
+        selectEntry(allImages[(idx + 1) % allImages.length]);
+      }
+      if (e.key === "ArrowUp" && allImages.length > 0) {
+        e.preventDefault();
+        selectEntry(
+          allImages[(idx - 1 + allImages.length) % allImages.length]
+        );
       }
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -92,7 +168,17 @@ export default function ImageModal() {
       document.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "";
     };
-  }, [selectedImage, allImages, setSelectedImage]);
+  }, [
+    selectedImage,
+    allImages,
+    isSeries,
+    seriesViewMode,
+    activeFrameIndex,
+    frames.length,
+    setSelectedImage,
+    setActiveFrame,
+    selectEntry,
+  ]);
 
   // Auto-preload when near end
   useEffect(() => {
@@ -128,6 +214,18 @@ export default function ImageModal() {
   }, [selectedImage, imageDetailsById, detailErrorsById]);
 
   if (!selectedImage || !activeImage) return null;
+
+  const currentFrame = frames[activeFrameIndex] ?? {
+    url: activeImage.url,
+    width: activeImage.width,
+    height: activeImage.height,
+  };
+  const currentSourceImage: ImagePrompt = {
+    ...activeImage,
+    url: currentFrame.url,
+    width: currentFrame.width,
+    height: currentFrame.height,
+  };
 
   const rawPromptText =
     promptLang === "zh"
@@ -181,12 +279,15 @@ export default function ImageModal() {
 
   const handleDownload = async () => {
     try {
-      const res = await fetch(selectedImage.url);
+      const res = await fetch(currentFrame.url);
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `image-${selectedImage.id}.png`;
+      a.download =
+        isSeries && activeFrameIndex > 0
+          ? `image-${selectedImage.id}-${activeFrameIndex + 1}.png`
+          : `image-${selectedImage.id}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -208,7 +309,8 @@ export default function ImageModal() {
       existingDraft?.sourceImageId === activeImage.id &&
       existingDraft.returnImageId === activeImage.id &&
       Boolean(existingDraft.sourceImage?.url) &&
-      existingDraft.sourceImage?.url !== activeImage.url;
+      existingDraft.sourceImage?.url !== currentFrame.url &&
+      !frames.some((f) => f.url === existingDraft.sourceImage?.url);
 
     saveRemixGenerationDraft(
       shouldReuseExistingDraft
@@ -223,7 +325,7 @@ export default function ImageModal() {
             sourceImageId: activeImage.id,
             prompt: promptText,
             promptLang,
-            sourceImage: activeImage,
+            sourceImage: currentSourceImage,
             returnTo: "gallery",
             returnImageId: activeImage.id,
             createdAt: Date.now(),
@@ -234,7 +336,7 @@ export default function ImageModal() {
     router.push(
       buildRemixGenerateUrl({
         sourceImageId: activeImage.id,
-        sourceImageUrl: activeImage.url,
+        sourceImageUrl: currentFrame.url,
         sourcePrompt: promptText,
         sourceAuthor: activeImage.author,
         sourceModel: activeImage.model,
@@ -247,14 +349,26 @@ export default function ImageModal() {
 
   const idx = allImages.findIndex((img) => img.id === selectedImage.id);
   const goNext = () => {
-    setSelectedImage(allImages[(idx + 1) % allImages.length]);
-    setPromptLang("en");
+    if (
+      isSeries &&
+      seriesViewMode === "single" &&
+      activeFrameIndex < frames.length - 1
+    ) {
+      setActiveFrame(activeFrameIndex + 1, "single");
+      return;
+    }
+    if (allImages.length > 0) {
+      selectEntry(allImages[(idx + 1) % allImages.length]);
+    }
   };
   const goPrev = () => {
-    setSelectedImage(
-      allImages[(idx - 1 + allImages.length) % allImages.length]
-    );
-    setPromptLang("en");
+    if (isSeries && seriesViewMode === "single" && activeFrameIndex > 0) {
+      setActiveFrame(activeFrameIndex - 1, "single");
+      return;
+    }
+    if (allImages.length > 0) {
+      selectEntry(allImages[(idx - 1 + allImages.length) % allImages.length]);
+    }
   };
 
   return (
@@ -323,67 +437,254 @@ export default function ImageModal() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Left: Image */}
+        {/* Left: Image / Series Stage */}
         <div
-          className="relative flex-1 min-h-0 bg-[#ebe7e0] flex items-center justify-center px-4 py-6 md:px-10 md:py-10"
+          className="relative flex-1 min-h-[48vh] md:min-h-0 bg-[#ebe7e0] flex flex-col overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Prev arrow */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              goPrev();
-            }}
-            className="absolute left-0 top-0 bottom-0 w-16 md:w-24 flex items-center justify-center text-[#d5cfc4] hover:text-[#8a837a]/60 transition-all duration-500 group z-10"
-          >
-            <svg
-              className="h-6 w-6 transform -translate-x-1 group-hover:translate-x-0 transition-transform duration-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-          </button>
+          {/* Series header bar (only when this entry contains multiple images) */}
+          {isSeries && (
+            <div className="relative z-20 flex-shrink-0 flex items-center justify-between px-5 pt-3.5 pb-1 md:px-8 md:pt-5">
+              <div className="flex items-center gap-2.5 text-[10px] uppercase tracking-[0.22em] text-[#8a837a]">
+                <span>{t("series")}</span>
+                <span className="text-[#c4bdb4]">·</span>
+                <span className="font-mono text-[#5c564e]">
+                  {seriesViewMode === "grid"
+                    ? t("seriesCount", { count: frames.length })
+                    : `${String(activeFrameIndex + 1).padStart(2, "0")} / ${String(
+                        frames.length
+                      ).padStart(2, "0")}`}
+                </span>
+              </div>
 
-          {/* Next arrow */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              goNext();
-            }}
-            className="absolute right-0 top-0 bottom-0 w-16 md:w-24 flex items-center justify-center text-[#d5cfc4] hover:text-[#8a837a]/60 transition-all duration-500 group z-10"
-          >
-            <svg
-              className="h-6 w-6 transform translate-x-1 group-hover:translate-x-0 transition-transform duration-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
-          </button>
+              <div
+                role="group"
+                aria-label={t("series")}
+                className="inline-flex items-center rounded-[4px] border border-[#d5cfc4]/80 bg-[#f5f2ed]/80 p-0.5 backdrop-blur-sm"
+              >
+                <button
+                  type="button"
+                  onClick={() => setViewMode("single")}
+                  className={`flex items-center gap-1.5 rounded-[3px] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] transition-colors ${
+                    seriesViewMode === "single"
+                      ? "bg-[#2a2520] text-[#f5f2ed]"
+                      : "text-[#8a837a] hover:text-[#2a2520]"
+                  }`}
+                >
+                  <svg
+                    className="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <rect
+                      x="5"
+                      y="4"
+                      width="14"
+                      height="16"
+                      rx="1.5"
+                      strokeWidth={1.5}
+                    />
+                  </svg>
+                  <span>{t("viewSingle")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("grid")}
+                  className={`flex items-center gap-1.5 rounded-[3px] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] transition-colors ${
+                    seriesViewMode === "grid"
+                      ? "bg-[#2a2520] text-[#f5f2ed]"
+                      : "text-[#8a837a] hover:text-[#2a2520]"
+                  }`}
+                >
+                  <svg
+                    className="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <rect x="4" y="4" width="6.5" height="6.5" rx="1" strokeWidth={1.5} />
+                    <rect x="13.5" y="4" width="6.5" height="6.5" rx="1" strokeWidth={1.5} />
+                    <rect x="4" y="13.5" width="6.5" height="6.5" rx="1" strokeWidth={1.5} />
+                    <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1" strokeWidth={1.5} />
+                  </svg>
+                  <span>{t("viewAll")}</span>
+                </button>
+              </div>
+            </div>
+          )}
 
-          <div className="relative w-full h-full max-w-[900px]">
-            <GalleryImage
-              src={activeImage.url}
-              alt=""
-              fill
-              className="object-contain"
-              sizes="(max-width: 768px) 100vw, 60vw"
-              priority
-            />
-          </div>
+          {seriesViewMode === "grid" && isSeries ? (
+            /* Simultaneous editorial contact-sheet grid view */
+            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 md:px-10 md:py-6">
+              <div
+                className={`mx-auto grid w-full max-w-[960px] gap-4 md:gap-5 ${
+                  frames.length === 3
+                    ? "grid-cols-2 lg:grid-cols-3"
+                    : "grid-cols-2"
+                }`}
+              >
+                {frames.map((frame, frameIdx) => {
+                  const isCurrent = frameIdx === activeFrameIndex;
+                  const ratio =
+                    frame.width && frame.height
+                      ? `${frame.width} / ${frame.height}`
+                      : "3 / 4";
+                  return (
+                    <button
+                      key={frame.url}
+                      type="button"
+                      onClick={() => setActiveFrame(frameIdx, "single")}
+                      aria-label={t("frameLabel", {
+                        index: frameIdx + 1,
+                        total: frames.length,
+                      })}
+                      className="group flex flex-col text-left focus:outline-none"
+                    >
+                      <div
+                        className={`relative w-full overflow-hidden bg-[#e0d9ce] transition-all duration-300 ${
+                          isCurrent
+                            ? "ring-2 ring-[#2a2520] shadow-[0_12px_32px_rgba(42,37,32,0.14)]"
+                            : "ring-1 ring-[#d5cfc4]/70 group-hover:ring-[#8a837a] group-hover:-translate-y-0.5 group-hover:shadow-[0_14px_36px_rgba(42,37,32,0.12)]"
+                        }`}
+                        style={{ aspectRatio: ratio }}
+                      >
+                        <GalleryImage
+                          src={frame.url}
+                          alt={t("frameLabel", {
+                            index: frameIdx + 1,
+                            total: frames.length,
+                          })}
+                          fill
+                          className="object-cover transition-transform duration-500 group-hover:scale-[1.015]"
+                          sizes="(max-width: 768px) 48vw, 30vw"
+                        />
+                        <span className="pointer-events-none absolute top-2.5 left-2.5 rounded-[3px] bg-[#141210]/60 px-1.5 py-0.5 font-mono text-[10px] leading-none text-[#f5f2ed]/90 backdrop-blur-sm">
+                          {String(frameIdx + 1).padStart(2, "0")}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* Single hero view (+ contact-sheet strip below when in a series) */
+            <>
+              <div className="relative flex-1 min-h-0 flex items-center justify-center px-4 py-4 md:px-10 md:py-6">
+                {/* Prev arrow */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    goPrev();
+                  }}
+                  className="absolute left-0 top-0 bottom-0 w-14 md:w-20 flex items-center justify-center text-[#c4bdb4] hover:text-[#5c564e] transition-all duration-300 group z-10"
+                >
+                  <svg
+                    className="h-6 w-6 transform -translate-x-1 group-hover:translate-x-0 transition-transform duration-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.25}
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                </button>
+
+                {/* Next arrow */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    goNext();
+                  }}
+                  className="absolute right-0 top-0 bottom-0 w-14 md:w-20 flex items-center justify-center text-[#c4bdb4] hover:text-[#5c564e] transition-all duration-300 group z-10"
+                >
+                  <svg
+                    className="h-6 w-6 transform translate-x-1 group-hover:translate-x-0 transition-transform duration-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.25}
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+                </button>
+
+                <div className="relative w-full h-full max-w-[900px]">
+                  <GalleryImage
+                    key={currentFrame.url}
+                    src={currentFrame.url}
+                    alt=""
+                    fill
+                    className="object-contain"
+                    sizes="(max-width: 768px) 100vw, 60vw"
+                    priority
+                  />
+                </div>
+              </div>
+
+              {/* Contact-sheet filmstrip showing all images in the series together */}
+              {isSeries && (
+                <div className="relative z-20 flex-shrink-0 border-t border-[#d5cfc4]/50 bg-[#e6e1d8]/85 px-4 py-3 md:px-8 md:py-3.5">
+                  <div className="mx-auto flex items-center justify-center gap-2.5 md:gap-3 overflow-x-auto scrollbar-hide py-0.5">
+                    {frames.map((frame, frameIdx) => {
+                      const isCurrent = frameIdx === activeFrameIndex;
+                      const thumbRatio =
+                        frame.width && frame.height
+                          ? Math.min(Math.max(frame.width / frame.height, 0.52), 1.6)
+                          : 0.75;
+                      return (
+                        <button
+                          key={frame.url}
+                          type="button"
+                          onClick={() => setActiveFrame(frameIdx, "single")}
+                          aria-label={t("frameLabel", {
+                            index: frameIdx + 1,
+                            total: frames.length,
+                          })}
+                          aria-current={isCurrent ? "true" : undefined}
+                          className={`group relative flex-shrink-0 overflow-hidden bg-[#ddd6ca] transition-all duration-300 focus:outline-none ${
+                            isCurrent
+                              ? "ring-2 ring-[#2a2520] opacity-100 -translate-y-0.5 shadow-sm"
+                              : "ring-1 ring-[#c4bdb4]/70 opacity-60 hover:opacity-95"
+                          }`}
+                          style={{
+                            height: "64px",
+                            width: `${Math.round(64 * thumbRatio)}px`,
+                          }}
+                        >
+                          <GalleryImage
+                            src={frame.url}
+                            alt=""
+                            fill
+                            className="object-cover"
+                            sizes="120px"
+                          />
+                          <span
+                            className={`pointer-events-none absolute bottom-1 right-1 rounded-[2px] px-1 py-0.5 font-mono text-[8px] leading-none ${
+                              isCurrent
+                                ? "bg-[#2a2520]/85 text-[#f5f2ed]"
+                                : "bg-[#141210]/55 text-[#f5f2ed]/85"
+                            }`}
+                          >
+                            {String(frameIdx + 1).padStart(2, "0")}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* Right: Editorial panel */}
@@ -423,10 +724,16 @@ export default function ImageModal() {
                 >
                   {activeImage.category || tCommon("untitled")}
                 </p>
-                <div className="mt-4 flex items-center gap-3 text-[10px] uppercase tracking-[0.2em] text-[#8a837a]/70">
+                <div className="mt-4 flex flex-wrap items-center gap-3 text-[10px] uppercase tracking-[0.2em] text-[#8a837a]/70">
                   <span>{activeImage.author}</span>
                   <span className="text-[#d5cfc4]">—</span>
                   <span>{modelLabel}</span>
+                  {isSeries && (
+                    <>
+                      <span className="text-[#d5cfc4]">·</span>
+                      <span>{t("seriesCount", { count: frames.length })}</span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -606,9 +913,9 @@ export default function ImageModal() {
               {t("remix")}
             </button>
             <div className="flex items-center gap-3 text-[9px] uppercase tracking-[0.2em] text-[#a39b90]">
-              <span>{activeImage.width || "—"}</span>
+              <span>{currentFrame.width || "—"}</span>
               <span className="text-[#d5cfc4]">×</span>
-              <span>{activeImage.height || "—"}</span>
+              <span>{currentFrame.height || "—"}</span>
             </div>
           </div>
         </div>

@@ -1,8 +1,5 @@
-import {
-  getGenerationsStoragePublicPrefix,
-  isUserOwnedStorageUrl,
-  pickTrustedReferenceUrl,
-} from "@/lib/reference-image-url";
+import { getImageSetFrames } from "@/lib/image-sets";
+import { pickTrustedReferenceUrl } from "@/lib/reference-image-url";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export {
@@ -13,18 +10,31 @@ export {
 
 export const MAX_REFERENCE_IMAGE_BYTES = 15 * 1024 * 1024;
 
-async function resolveUrlFromImageId(sourceImageId: string) {
+async function resolveUrlsFromImageId(sourceImageId: string): Promise<string[] | null> {
   const { data, error } = await supabaseAdmin
     .from("images")
-    .select("url")
+    .select("url,width,height,extra_images")
     .eq("id", sourceImageId)
     .single();
 
-  if (error || !data?.url) {
+  if (error) {
+    if (error.message?.includes("extra_images")) {
+      const fallback = await supabaseAdmin
+        .from("images")
+        .select("url")
+        .eq("id", sourceImageId)
+        .single();
+      if (fallback.error || !fallback.data?.url) return null;
+      return [fallback.data.url.trim()];
+    }
     return null;
   }
 
-  return data.url.trim();
+  if (!data?.url) {
+    return null;
+  }
+
+  return getImageSetFrames(data).map((frame) => frame.url);
 }
 
 export async function resolveTrustedReferenceImageUrl(
@@ -43,13 +53,13 @@ export async function resolveTrustedReferenceImageUrl(
       ? options.sourceImageUrl.trim()
       : null;
 
-  const catalogUrl = normalizedSourceImageId
-    ? await resolveUrlFromImageId(normalizedSourceImageId)
+  const catalogUrls = normalizedSourceImageId
+    ? await resolveUrlsFromImageId(normalizedSourceImageId)
     : null;
 
-  if (normalizedSourceImageId && !catalogUrl) {
+  if (normalizedSourceImageId && !catalogUrls) {
     return { url: null, error: "Source image not found" as const };
   }
 
-  return pickTrustedReferenceUrl(userId, normalizedSourceImageUrl, catalogUrl);
+  return pickTrustedReferenceUrl(userId, normalizedSourceImageUrl, catalogUrls);
 }

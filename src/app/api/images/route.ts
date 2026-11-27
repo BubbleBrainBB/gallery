@@ -58,67 +58,75 @@ export async function GET(request: Request) {
     .filter(Boolean);
   const parsedAt = performance.now();
 
-  let query = supabase
-    .from("images")
-    .select(
-      "id,url,author,model,category,width,height,created_at,tweet_url,mj_version,mj_profiles,mj_srefs"
-    )
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .range(offset, offset + limit);
+  const buildQuery = (includeExtraImages: boolean) => {
+    const columns: string = includeExtraImages
+      ? "id,url,author,model,category,width,height,created_at,tweet_url,mj_version,mj_profiles,mj_srefs,extra_images"
+      : "id,url,author,model,category,width,height,created_at,tweet_url,mj_version,mj_profiles,mj_srefs";
+    let q = supabase
+      .from("images")
+      .select(columns)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + limit);
 
-  if (ids && ids.length > 0) {
-    query = query.in("id", ids);
-  }
-
-  if (!adminScope) {
-    query = query.in("category", PUBLIC_IMAGE_CATEGORIES);
-  }
-
-  if (category && category !== "all") {
-    query = query.eq("category", category);
-  }
-
-  if (model && model !== "all") {
-    query = query.eq("model", model);
-  }
-
-  if (mjVersion && mjVersion !== "all") {
-    query = query.eq("mj_version", mjVersion);
-  }
-
-  if (mjProfile) {
-    query = query.contains("mj_profiles", [mjProfile]);
-  }
-
-  if (mjSref) {
-    query = query.contains("mj_srefs", [mjSref]);
-  }
-
-  if (time && time !== "all") {
-    const now = new Date();
-    const cutoffs: Record<string, Date> = {
-      today: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
-      week: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
-      month: new Date(now.getFullYear(), now.getMonth(), 1),
-    };
-    const cutoff = cutoffs[time];
-    if (cutoff) {
-      query = query.gte("created_at", cutoff.toISOString());
+    if (ids && ids.length > 0) {
+      q = q.in("id", ids);
     }
-  }
 
-  if (search) {
-    const normalizedSearch = search.replace(/[{},]/g, " ").trim();
-    if (normalizedSearch) {
-      query = query.or(
-        `prompt.ilike.%${normalizedSearch}%,author.ilike.%${normalizedSearch}%,model.ilike.%${normalizedSearch}%,tags.cs.{${normalizedSearch}}`
-      );
+    if (!adminScope) {
+      q = q.in("category", PUBLIC_IMAGE_CATEGORIES);
     }
-  }
+
+    if (category && category !== "all") {
+      q = q.eq("category", category);
+    }
+
+    if (model && model !== "all") {
+      q = q.eq("model", model);
+    }
+
+    if (mjVersion && mjVersion !== "all") {
+      q = q.eq("mj_version", mjVersion);
+    }
+
+    if (mjProfile) {
+      q = q.contains("mj_profiles", [mjProfile]);
+    }
+
+    if (mjSref) {
+      q = q.contains("mj_srefs", [mjSref]);
+    }
+
+    if (time && time !== "all") {
+      const now = new Date();
+      const cutoffs: Record<string, Date> = {
+        today: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+        week: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+        month: new Date(now.getFullYear(), now.getMonth(), 1),
+      };
+      const cutoff = cutoffs[time];
+      if (cutoff) {
+        q = q.gte("created_at", cutoff.toISOString());
+      }
+    }
+
+    if (search) {
+      const normalizedSearch = search.replace(/[{},]/g, " ").trim();
+      if (normalizedSearch) {
+        q = q.or(
+          `prompt.ilike.%${normalizedSearch}%,author.ilike.%${normalizedSearch}%,model.ilike.%${normalizedSearch}%,tags.cs.{${normalizedSearch}}`
+        );
+      }
+    }
+
+    return q;
+  };
 
   const queryStartedAt = performance.now();
-  const { data, error } = await query;
+  let { data, error } = await buildQuery(true);
+  if (error?.message?.includes("extra_images")) {
+    ({ data, error } = await buildQuery(false));
+  }
   const queryFinishedAt = performance.now();
 
   if (error) {
@@ -140,8 +148,11 @@ export async function GET(request: Request) {
   }
 
   const mapStartedAt = performance.now();
-  const hasMore = Boolean(data && data.length > limit);
-  const images = (hasMore ? data.slice(0, limit) : (data || [])).map((image) => ({
+  const rows = Array.isArray(data)
+    ? (data as unknown as Record<string, unknown>[])
+    : [];
+  const hasMore = rows.length > limit;
+  const images = (hasMore ? rows.slice(0, limit) : rows).map((image) => ({
     ...image,
     // Preserve the shared client shape without shipping full tag content.
     tags: [],
